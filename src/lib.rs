@@ -3,21 +3,21 @@
 
 use dodrio::bumpalo::{self, Bump};
 use dodrio::{Node, Render};
+
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-//cannot use rand::thread_rng; with wasm. instead use OsRng
-//clarification: https://medium.com/@rossharrison/generating-sudoku-boards-pt-3-rust-for-webassembly-85bd7294c34a
-use rand::rngs::OsRng;
-use rand::Rng;
 
-enum CardStatus {
-    CardFaceDown,
-    CardFaceUpTemporary,
-    CardFaceUpPermanently,
+use rand::seq::SliceRandom;
+use rand::{thread_rng, Rng};
+
+enum CardFaceStatus {
+    Down,
+    UpTemporary,
+    UpPermanently,
 }
 
 struct Card {
-    status: CardStatus,
+    status: CardFaceStatus,
     //src attribute for HTML element image
     src_as_image_source: String,
     //id attribute for HTML element image contains the card index
@@ -31,11 +31,11 @@ struct CardGrid {
     //The player in one turn clicks 2 times and open 2 cards. If not match,
     //the third click closes opened cards and
     //it starts the next player turn.
-    count_click_inside_one_turn: i32,
+    count_click_inside_one_turn: i16,
     card_index_of_first_click: usize,
     card_index_of_second_click: usize,
     //counts only clicks that flip the card. The third click is not counted.
-    count_all_clicks: i32,
+    count_all_clicks: i16,
 }
 
 impl CardGrid {
@@ -48,7 +48,7 @@ impl CardGrid {
 
         while i < 8 {
             //gen_range is lower inclusive, upper exclusive
-            let num: i32 = rng.gen_range(1, 26 + 1);
+            let num: i16 = rng.gen_range(1, 26 + 1);
             if dbg!(vec_of_random_numbers.contains(&num)) {
                 //do nothing if the random number is repeated
                 dbg!(num);
@@ -59,21 +59,19 @@ impl CardGrid {
                 i += 1;
             }
         }
+
         //shuffle the numbers
-        let mut vrndslice = vec_of_random_numbers.as_mut_slice();
-        //cannot use rand_rng and new Slice Shuffle with wasm.
-        //instead use OsRng with deprecated rand::Rng::shuffle
-        //gslice.shuffle(&mut thread_rng());
-        OsRng::new().unwrap().shuffle(&mut vrndslice);
+        let vrndslice = vec_of_random_numbers.as_mut_slice();
+        vrndslice.shuffle(&mut thread_rng());
 
         //create Cards from random numbers
         dbg!("vec_of_random_numbers values");
         let mut vec_card_from_random_numbers = Vec::new();
         for (index, random_number) in vec_of_random_numbers.iter().enumerate() {
-            let src = String::from(format!("content/mem_image_{:02}.png", random_number));
+            let src = format!("content/mem_image_{:02}.png", random_number);
             dbg!(&src);
             let new_card = Card {
-                status: CardStatus::CardFaceDown,
+                status: CardFaceStatus::Down,
                 src_as_image_source: src,
                 id_as_card_index: format!("img{}", index),
             };
@@ -107,11 +105,11 @@ impl Render for CardGrid {
             for y in 1..5 {
                 let index = (x - 1) * 4 + y - 1;
                 let src = match self.vec_cards[index].status {
-                    CardStatus::CardFaceDown => SRC_FOR_CARD_FACE_DOWN,
-                    CardStatus::CardFaceUpTemporary => {
+                    CardFaceStatus::Down => SRC_FOR_CARD_FACE_DOWN,
+                    CardFaceStatus::UpTemporary => {
                         self.vec_cards[index].src_as_image_source.as_str()
                     }
-                    CardStatus::CardFaceUpPermanently => {
+                    CardFaceStatus::UpPermanently => {
                         self.vec_cards[index].src_as_image_source.as_str()
                     }
                 };
@@ -142,9 +140,9 @@ impl Render for CardGrid {
                             if card_grid.count_click_inside_one_turn >= 2 {
                                 //third click closes first and second card
                                 card_grid.vec_cards[card_grid.card_index_of_first_click].status =
-                                    CardStatus::CardFaceDown;
+                                    CardFaceStatus::Down;
                                 card_grid.vec_cards[card_grid.card_index_of_second_click].status =
-                                    CardStatus::CardFaceDown;
+                                    CardFaceStatus::Down;
                                 card_grid.count_click_inside_one_turn = 0;
                             } else {
                                 //id attribute of image html element is prefixed with img ex. "img12"
@@ -153,9 +151,9 @@ impl Render for CardGrid {
 
                                 match card_grid.vec_cards[this_click_card_index].status {
                                     //if card facedown, flip it
-                                    CardStatus::CardFaceDown => {
+                                    CardFaceStatus::Down => {
                                         card_grid.vec_cards[this_click_card_index].status =
-                                            CardStatus::CardFaceUpTemporary;
+                                            CardFaceStatus::UpTemporary;
                                         if card_grid.count_click_inside_one_turn == 0 {
                                             //if is first click, just count the clicks
                                             card_grid.card_index_of_first_click =
@@ -179,17 +177,17 @@ impl Render for CardGrid {
                                                 // the two cards matches. make them permanent FaceUp
                                                 card_grid.vec_cards
                                                     [card_grid.card_index_of_first_click]
-                                                    .status = CardStatus::CardFaceUpPermanently;
+                                                    .status = CardFaceStatus::UpPermanently;
                                                 card_grid.vec_cards
                                                     [card_grid.card_index_of_second_click]
-                                                    .status = CardStatus::CardFaceUpPermanently;
+                                                    .status = CardFaceStatus::UpPermanently;
                                                 card_grid.count_click_inside_one_turn = 0;
                                             }
                                         }
                                     }
                                     //do nothing if player clicks the faceUp cards
-                                    CardStatus::CardFaceUpTemporary => (),
-                                    CardStatus::CardFaceUpPermanently => (),
+                                    CardFaceStatus::UpTemporary => (),
+                                    CardFaceStatus::UpPermanently => (),
                                 };
                             }
 
@@ -254,8 +252,8 @@ The Count of clicks can be used as score. The lower the Count, the better score 
                     .children([
                         text(bumpalo::format!(in bump, "Learning Rust programming: {}", "").into_bump_str(),),
                         a(bump)
-                            .attr("href", "https://github.com/LucianoBestia/mem1")  
-                            .attr("target","_blank")              
+                            .attr("href", "https://github.com/LucianoBestia/mem1")
+                            .attr("target","_blank")
                             .children([text(bumpalo::format!(in bump, "https://github.com/LucianoBestia/mem1{}", "").into_bump_str(),)])
                             .finish(),
                     ])
